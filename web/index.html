@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Target Practice</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --panel: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.68);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body { height: 100%; }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: radial-gradient(1200px 600px at 50% 0%, rgba(100, 160, 255, 0.22), transparent 60%),
+                    radial-gradient(900px 500px at 50% 100%, rgba(180, 120, 255, 0.14), transparent 55%),
+                    var(--bg);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+      }
+
+      .app {
+        width: min(1100px, 92vw);
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+      }
+
+      header {
+        text-align: center;
+        user-select: none;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(22px, 2.2vw, 34px);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      /* Keep Emscripten elements present but visually non-distracting */
+      #spinner, #status, #progress, #controls, #output {
+        display: none !important;
+      }
+
+      .stage {
+        width: fit-content;
+        padding: 14px;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow:
+          0 14px 45px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+
+      /* the canvas *must not* have any border or padding, or mouse coords will be wrong */
+      canvas#canvas {
+        display: block;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        background: black;
+        border-radius: 12px; /* safe: doesn't affect coord math */
+        outline: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <main class="app" role="main">
+      <header>
+        <a href="https://github.com/lfanew/nim-wasm-demo" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;"><h1>Target Practice</h1></a>
+      </header>
+
+      <div class="stage">
+        <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+      </div>
+
+      <!-- Kept for compatibility with the default Emscripten shell; hidden via CSS -->
+      <div class="spinner" id="spinner"></div>
+      <div class="emscripten" id="status">Downloading...</div>
+      <span id="controls">
+        <span><input type="checkbox" id="resize" />Resize canvas</span>
+        <span><input type="checkbox" id="pointerLock" checked />Lock/hide mouse pointer &nbsp;&nbsp;&nbsp;</span>
+        <span>
+          <input
+            type="button"
+            value="Fullscreen"
+            onclick="Module.requestFullscreen(document.getElementById('pointerLock').checked,
+                                              document.getElementById('resize').checked)"
+          />
+        </span>
+      </span>
+      <div class="emscripten">
+        <progress value="0" max="100" id="progress" hidden="1"></progress>
+      </div>
+      <textarea id="output" rows="8"></textarea>
+    </main>
+
+    <script type="text/javascript">
+      var statusElement = document.getElementById("status");
+      var progressElement = document.getElementById("progress");
+      var spinnerElement = document.getElementById("spinner");
+      var canvasElement = document.getElementById("canvas");
+      var outputElement = document.getElementById("output");
+      if (outputElement) outputElement.value = ""; // clear browser cache
+
+      canvasElement.addEventListener(
+        "webglcontextlost",
+        (e) => {
+          alert("WebGL context lost. You will need to reload the page.");
+          e.preventDefault();
+        },
+        false
+      );
+
+      var Module = {
+        print(...args) {
+          console.log(...args);
+          if (outputElement) {
+            var text = args.join(" ");
+            outputElement.value += text + "\n";
+            outputElement.scrollTop = outputElement.scrollHeight;
+          }
+        },
+        canvas: canvasElement,
+        setStatus(text) {
+          if (!Module.setStatus.last) Module.setStatus.last = { time: Date.now(), text: "" };
+          if (text === Module.setStatus.last.text) return;
+          var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+          var now = Date.now();
+          if (m && now - Module.setStatus.last.time < 30) return;
+          Module.setStatus.last.time = now;
+          Module.setStatus.last.text = text;
+          if (m) {
+            text = m[1];
+            progressElement.value = parseInt(m[2]) * 100;
+            progressElement.max = parseInt(m[4]) * 100;
+            progressElement.hidden = false;
+            spinnerElement.hidden = false;
+          } else {
+            progressElement.value = null;
+            progressElement.max = null;
+            progressElement.hidden = true;
+            if (!text) spinnerElement.style.display = "none";
+          }
+          statusElement.innerHTML = text;
+        },
+        totalDependencies: 0,
+        monitorRunDependencies(left) {
+          this.totalDependencies = Math.max(this.totalDependencies, left);
+          Module.setStatus(
+            left
+              ? "Preparing... (" + (this.totalDependencies - left) + "/" + this.totalDependencies + ")"
+              : "All downloads complete."
+          );
+        },
+      };
+
+      Module.setStatus("Downloading...");
+      window.onerror = (event) => {
+        Module.setStatus("Exception thrown, see JavaScript console");
+        spinnerElement.style.display = "none";
+        Module.setStatus = (text) => {
+          if (text) console.error("[post-exception status] " + text);
+        };
+      };
+    </script>
+    <script async type="text/javascript" src="index.js"></script>
+  </body>
+</html>
